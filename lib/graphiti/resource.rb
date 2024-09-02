@@ -98,7 +98,7 @@ module Graphiti
     end
 
     def persist_with_relationships(meta, attributes, relationships, caller_model = nil, foreign_key = nil)
-      persistence = Graphiti::Util::Persistence \
+      persistence = Graphiti::Util::Persistence
         .new(self, meta, attributes, relationships, caller_model, foreign_key)
       persistence.run
     end
@@ -111,6 +111,10 @@ module Graphiti
 
     def before_resolve(scope, query)
       scope
+    end
+
+    def load_async(scope)
+      adapter.load_async(scope)
     end
 
     def resolve(scope)

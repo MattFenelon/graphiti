@@ -222,6 +222,14 @@ module Graphiti
         scope.minimum(attr)
       end
 
+      def load_async(scope)
+        if scope.responds_to?(:load_async)
+          scope.load_async
+        else
+          scope
+        end
+      end
+
       # (see Adapters::Abstract#resolve)
       def resolve(scope)
         scope.to_a
@@ -304,7 +312,7 @@ module Graphiti
       end
 
       def close
-        ::ActiveRecord::Base.clear_active_connections!
+        ::ActiveRecord::Base.connection_handler.clear_active_connections!
       end
 
       def can_group?

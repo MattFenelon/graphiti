@@ -328,6 +328,10 @@ module Graphiti
         raise "you must override #transaction in an adapter subclass, it must yield"
       end
 
+      def load_async(scope)
+        scope
+      end
+
       # Resolve the scope. This is where you'd actually fire SQL,
       # actually make an HTTP call, etc.
       #

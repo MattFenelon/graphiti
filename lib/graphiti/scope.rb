@@ -18,7 +18,7 @@ module Graphiti
         []
       else
         resolved = broadcast_data { |payload|
-          @object = @resource.before_resolve(@object, @query)
+          load_async
           payload[:results] = @resource.resolve(@object)
           payload[:results]
         }
@@ -31,40 +31,27 @@ module Graphiti
       end
     end
 
+    def load_async
+      return if defined? @async
+      @async = true
+
+      o = @resource.before_resolve(@object, @query)
+      # load_async must be called last.
+      @object = @resource.load_async(o)
+    end
+
     def resolve_sideloads(results)
       return if results == []
 
-      concurrent = Graphiti.config.concurrency
-      promises = []
-
-      @query.sideloads.each_pair do |name, q|
+      sideloaded_resources = @query.sideloads.filter_map do |name, q|
         sideload = @resource.class.sideload(name)
         next if sideload.nil? || sideload.shared_remote?
-        parent_resource = @resource
-        graphiti_context = Graphiti.context
-        resolve_sideload = -> {
-          Graphiti.config.before_sideload&.call(graphiti_context)
-          Graphiti.context = graphiti_context
-          sideload.resolve(results, q, parent_resource)
-          @resource.adapter.close if concurrent
-        }
-        if concurrent
-          promises << Concurrent::Promise.execute(&resolve_sideload)
-        else
-          resolve_sideload.call
-        end
+
+        Graphiti.config.before_sideload&.call(Graphiti.context)
+        sideload.load_async(results, q, @resource)
       end
 
-      if concurrent
-        # Wait for all promises to finish
-        sleep 0.01 until promises.all? { |p| p.fulfilled? || p.rejected? }
-        # Re-raise the error with correct stacktrace
-        # OPTION** to avoid failing here?? if so need serializable patch
-        # to avoid loading data when association not loaded
-        if (rejected = promises.find(&:rejected?))
-          raise rejected.reason
-        end
-      end
+      sideloaded_resources.each(&:to_a)
     end
 
     def parent_resource
