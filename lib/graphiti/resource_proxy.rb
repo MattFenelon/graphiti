@@ -87,6 +87,10 @@ module Graphiti
     alias_method :to_a, :data
     alias_method :resolve_data, :data
 
+    def load_async
+      @scope.load_async
+    end
+
     def meta
       @meta ||= data.respond_to?(:meta) ? data.meta : {}
     end

@@ -235,7 +235,9 @@ module Graphiti
     end
 
     def load(parents, query, graph_parent)
-      build_resource_proxy(parents, query, graph_parent).to_a
+      proxy = build_resource_proxy(parents, query, graph_parent)
+      proxy.load_async if proxy.respond_to?(:load_async)
+      proxy
     end
 
     # Override in subclass
@@ -286,6 +288,10 @@ module Graphiti
     end
 
     def resolve(parents, query, graph_parent)
+      load_async(parents, query, graph_parent).to_a
+    end
+
+    def load_async(parents, query, graph_parent)
       if single? && parents.length > 1
         raise Errors::SingularSideload.new(self, parents.length)
       end
