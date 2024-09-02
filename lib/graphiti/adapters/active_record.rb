@@ -223,7 +223,7 @@ module Graphiti
       end
 
       def load_async(scope)
-        if scope.responds_to?(:load_async)
+        if scope.respond_to?(:load_async)
           scope.load_async
         else
           scope
