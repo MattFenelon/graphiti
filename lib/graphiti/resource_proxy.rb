@@ -89,7 +89,6 @@ module Graphiti
 
     def load_async
       @scope.load_async
-      self
     end
 
     def meta
