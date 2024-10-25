@@ -116,15 +116,25 @@ module Graphiti
     def future_resolve_sideloads(results)
       return Concurrent::Promises.fulfilled_future(nil, self.class.global_thread_pool_executor) if results == []
 
-      sideload_promises = @query.sideloads.filter_map do |name, q|
+      sideloads = @query.sideloads.compact
+      sideload_size = sideloads.size
+      sideload_proc = lambda do |sideload, parent_results, sideload_query, parent_resource|
+        Graphiti.config.before_sideload&.call(Graphiti.context)
+        sideload.future_resolve(parent_results, sideload_query, parent_resource)
+      end
+      sideload_promises = sideloads.map do |name, q|
         sideload = @resource.class.sideload(name)
         next if sideload.nil? || sideload.shared_remote?
 
-        p = future_with_context(results, q, @resource) do |parent_results, sideload_query, parent_resource|
-          Graphiti.config.before_sideload&.call(Graphiti.context)
-          sideload.future_resolve(parent_results, sideload_query, parent_resource)
+        if sideload_size > 1
+          p = future_with_context(sideload, results, q, @resource, &sideload_proc)
+          p.flat
+        else
+          Concurrent::Promises.fulfilled_future(
+            sideload_proc.call(sideload, results, q, @resource),
+            self.class.global_thread_pool_executor
+          )
         end
-        p.flat
       end
 
       Concurrent::Promises.zip_futures_on(self.class.global_thread_pool_executor, *sideload_promises)

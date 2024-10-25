@@ -192,6 +192,19 @@ RSpec.describe Graphiti::Scope do
           instance.resolve_sideloads(results)
         end
 
+        it "loads sideloads on separate threads" do
+          resolve_thread = nil
+
+          allow(sideload).to receive(:future_resolve) do
+            resolve_thread = Thread.current.object_id
+            Concurrent::Promises.fulfilled_future({})
+          end
+
+          instance.resolve_sideloads(results)
+
+          expect(resolve_thread).not_to eq(Thread.current.object_id)
+        end
+
         context "with nested sideloads greater than Graphiti.config.concurrency_max_threads" do
           let(:params) { {include: {positions: {department: {}}}} }
           let(:position_resource) do
@@ -271,6 +284,21 @@ RSpec.describe Graphiti::Scope do
             ensure
               Fiber[:foo] = nil
             end
+          end
+        end
+
+        describe "solo sideloading" do
+          it "loads on the same thread" do
+            resolve_thread = nil
+
+            allow(sideload).to receive(:future_resolve) do
+              resolve_thread = Thread.current.object_id
+              Concurrent::Promises.fulfilled_future({})
+            end
+
+            instance.resolve_sideloads(results)
+
+            expect(resolve_thread).to eq(Thread.current.object_id)
           end
         end
       end
