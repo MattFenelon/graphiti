@@ -130,10 +130,7 @@ module Graphiti
           p = future_with_context(sideload, results, q, @resource, &sideload_proc)
           p.flat
         else
-          Concurrent::Promises.fulfilled_future(
-            sideload_proc.call(sideload, results, q, @resource),
-            self.class.global_thread_pool_executor
-          )
+          sideload_proc.call(sideload, results, q, @resource)
         end
       end
 
