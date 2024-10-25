@@ -46,7 +46,7 @@ RSpec.describe Graphiti::Scope do
 
         it "resolves the sideload" do
           expect(sideload).to receive(:future_resolve)
-            .with(results, query.sideloads[:positions], resource) { Concurrent::Promises.future {} }
+            .with(results, query.sideloads[:positions], resource) { Concurrent::Promises.fulfilled_future({}) }
           instance.resolve
         end
 
@@ -80,41 +80,36 @@ RSpec.describe Graphiti::Scope do
         context "when Graphiti.config.concurrency is true" do
           before do
             allow(Graphiti.config).to receive(:concurrency).and_return(true)
+            stub_const(
+              "Graphiti::Scope::GLOBAL_THREAD_POOL_EXECUTOR",
+              Concurrent::Promises.delay do
+                Concurrent::ThreadPoolExecutor.new(min_threads: 2, max_threads: 2, fallback_policy: :caller_runs)
+              end
+            )
           end
 
-          context "when there are available threads" do
-            before do
-              stub_const(
-                "Graphiti::Scope::GLOBAL_THREAD_POOL_EXECUTOR",
-                Concurrent::Promises.delay do
-                  Concurrent::ThreadPoolExecutor.new(min_threads: 2, max_threads: 2, fallback_policy: :caller_runs)
-                end
-              )
+          it "closes db connections on the same thread as opened" do
+            resolve_thread = nil
+            close_thread = nil
+
+            expect(position_resource).to receive(:resolve) do
+              resolve_thread = Thread.current.object_id
+              results
+            end
+            expect(position_resource.adapter).to receive(:close) do
+              close_thread = Thread.current.object_id
+              nil
             end
 
-            it "closes db connections on the same thread as opened" do
-              resolve_thread = nil
-              close_thread = nil
+            instance.resolve
 
-              expect(position_resource).to receive(:resolve) do
-                resolve_thread = Thread.current.object_id
-                results
-              end
-              expect(position_resource.adapter).to receive(:close) do
-                close_thread = Thread.current.object_id
-                nil
-              end
+            expect(resolve_thread).not_to eq(Thread.current.object_id)
+            expect(resolve_thread).to eq(close_thread)
+          end
 
-              instance.resolve
-
-              expect(resolve_thread).not_to eq(Thread.current.object_id)
-              expect(resolve_thread).to eq(close_thread)
-            end
-
-            it "does not close parent db connections" do
-              expect(resource.adapter).not_to receive(:close)
-              instance.resolve
-            end
+          it "does not close parent db connections" do
+            expect(resource.adapter).not_to receive(:close)
+            instance.resolve
           end
         end
 
@@ -160,7 +155,7 @@ RSpec.describe Graphiti::Scope do
 
       it "resolves the sideload" do
         expect(sideload).to receive(:future_resolve)
-          .with(results, query.sideloads[:positions], resource) { Concurrent::Promises.future {} }
+          .with(results, query.sideloads[:positions], resource) { Concurrent::Promises.fulfilled_future({}) }
         instance.resolve_sideloads(results)
       end
 
@@ -225,7 +220,7 @@ RSpec.describe Graphiti::Scope do
           end
 
           context "with nested sideloads greater than Graphiti.config.concurrency_max_threads" do
-            let(:params) { {include: {positions: {department: {}}}} }
+            let(:params) { {include: {positions: {department: {}}, visas: {}}} }
             let(:position_resource) do
               Class.new(PORO::PositionResource) do
                 self.default_page_size = 1
