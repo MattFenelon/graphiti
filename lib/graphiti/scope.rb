@@ -62,6 +62,8 @@ module Graphiti
       assign_serializer(resolved)
       yield resolved if block_given?
       @opts[:after_resolve]&.call(resolved)
+      # TODO: Do not close the adapter if we're sideloading on the
+      # same thread as the parent.
       sideloaded = @query.parents.any?
       close_adapter = Graphiti.config.concurrency && sideloaded
       if close_adapter
