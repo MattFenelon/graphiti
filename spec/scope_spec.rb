@@ -268,12 +268,15 @@ RSpec.describe Graphiti::Scope do
             it "are accessible to the sideloading thread from the threadpool" do
               Thread.current[:foo] = "bar"
 
+              sideload_foo = nil
+
               allow(sideload).to receive(:future_resolve) do
-                expect(Thread.current[:foo]).to eq("bar")
+                sideload_foo = Thread.current[:foo]
                 Concurrent::Promises.fulfilled_future({})
               end
               instance.resolve_sideloads(results)
 
+              expect(sideload_foo).to eq("bar")
               expect(Thread.current[:foo]).to eq("bar")
             ensure
               Thread.current[:foo] = nil
@@ -293,12 +296,14 @@ RSpec.describe Graphiti::Scope do
 
                 Fiber[:foo] = "bar"
 
+                sideload_foo = nil
+
                 allow(sideload).to receive(:future_resolve) do
-                  expect(Fiber[:foo]).to eq("bar")
+                  sideload_foo = Fiber[:foo]
                   Concurrent::Promises.fulfilled_future({})
                 end
                 instance.resolve_sideloads(results)
-
+                expect(sideload_foo).to eq("bar")
                 expect(Fiber[:foo]).to eq("bar")
               ensure
                 Fiber[:foo] = nil
