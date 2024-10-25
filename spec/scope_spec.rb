@@ -173,122 +173,186 @@ RSpec.describe Graphiti::Scope do
           stub_const(
             "Graphiti::Scope::GLOBAL_THREAD_POOL_EXECUTOR",
             Concurrent::Promises.delay do
-              Concurrent::ThreadPoolExecutor.new(min_threads: 1, max_threads: 1, fallback_policy: :caller_runs)
+              Concurrent::ThreadPoolExecutor.new(min_threads: 2, max_threads: 2, fallback_policy: :caller_runs)
             end
           )
         end
 
-        it "calls configuration.before_sideload with context" do
-          Graphiti.context[:tenant_id] = 1
-          allow(sideload).to receive(:future_resolve) { Concurrent::Promises.future {} }
-          expect(before_sideload).to receive(:call).with(hash_including(tenant_id: 1))
-          instance.resolve_sideloads(results)
-        end
-
-        it "resolves sideloads concurrently with the threadpool" do
-          allow(sideload).to receive(:future_resolve) { Concurrent::Promises.future {} }
-          expect(Concurrent::Promises).to receive(:future_on).with(:io).and_call_original
-          expect(Concurrent::Promises).to receive(:future_on).with(an_instance_of(Concurrent::ThreadPoolExecutor), any_args).and_call_original.once
-          instance.resolve_sideloads(results)
-        end
-
-        it "loads sideloads on separate threads" do
-          resolve_thread = nil
-
-          allow(sideload).to receive(:future_resolve) do
-            resolve_thread = Thread.current.object_id
-            Concurrent::Promises.fulfilled_future({})
-          end
-
-          instance.resolve_sideloads(results)
-
-          expect(resolve_thread).not_to eq(Thread.current.object_id)
-        end
-
-        context "with nested sideloads greater than Graphiti.config.concurrency_max_threads" do
-          let(:params) { {include: {positions: {department: {}}}} }
-          let(:position_resource) do
-            Class.new(PORO::PositionResource) do
-              self.default_page_size = 1
-            end.new
-          end
-          let(:department_resource) do
-            Class.new(PORO::DepartmentResource) do
-              self.default_page_size = 1
-            end.new
-          end
-          let(:department_sideload) { double("department", shared_remote?: false, name: :department) }
-          let(:position_results) { double("positions").as_null_object }
+        context "with multiple sideloads" do
+          let(:sideload_2) { double("visas", shared_remote?: false, name: :visas) }
+          let(:params) { {include: {positions: {}, visas: {}}} }
 
           before do
-            allow(position_resource).to receive(:resolve) { position_results }
-            allow(position_resource.class).to receive(:sideload).with(:department) { department_sideload }
-            allow(department_resource).to receive(:resolve) { double("department").as_null_object }
-            allow(department_resource.class).to receive(:sideload).with(:positions) { department_positions_sideload }
-
-            # make resolve just load the sideloads
-            allow(sideload).to receive(:future_resolve) do |_results, q, _parent_resource|
-              described_class.new(double.as_null_object, position_resource, q).future_resolve
-            end
-
-            allow(department_sideload).to receive(:future_resolve) do |_results, q, _parent_resource|
-              described_class.new(double.as_null_object, department_resource, q).future_resolve
-            end
+            allow(resource.class).to receive(:sideload).with(:visas) { sideload_2 }
+            allow(sideload_2).to receive(:future_resolve) { Concurrent::Promises.fulfilled_future({}) }
           end
 
-          it "does not deadlock" do
-            expect { instance.resolve_sideloads(results) }.not_to raise_error
-          end
-
-          it "flattens the nested sideload promises" do
-            expect(instance.resolve_sideloads(results)).to contain_exactly(position_results)
-          end
-        end
-
-        context "parent thread locals" do
-          it "are accessible to the sideloading thread from the threadpool" do
-            Thread.current[:foo] = "bar"
+          it "loads asynchronously using threads" do
+            sideload_thread = nil
+            sideload_2_thread = nil
 
             allow(sideload).to receive(:future_resolve) do
-              expect(Thread.current[:foo]).to eq("bar")
+              sideload_thread = Thread.current.object_id
               Concurrent::Promises.fulfilled_future({})
             end
+            allow(sideload_2).to receive(:future_resolve) do
+              sideload_2_thread = Thread.current.object_id
+              Concurrent::Promises.fulfilled_future({})
+            end
+
             instance.resolve_sideloads(results)
 
-            expect(Thread.current[:foo]).to eq("bar")
-          ensure
-            Thread.current[:foo] = nil
+            expect(sideload_thread).not_to eq(Thread.current.object_id)
+            expect(sideload_2_thread).not_to eq(Thread.current.object_id)
+            expect(sideload_thread).not_to eq(sideload_2_thread)
           end
-        end
 
-        if Fiber.respond_to?(:[])
-          context "parent fiber locals" do
+          it "calls configuration.before_sideload with context" do
+            Graphiti.context[:tenant_id] = 1
+            allow(sideload).to receive(:future_resolve) { Concurrent::Promises.future {} }
+            expect(before_sideload).to receive(:call).with(hash_including(tenant_id: 1))
+
+            instance.resolve_sideloads(results)
+          end
+
+          it "resolves sideloads concurrently with the threadpool" do
+            allow(sideload).to receive(:future_resolve) { Concurrent::Promises.fulfilled_future({}) }
+            expect(Concurrent::Promises).to receive(:future_on).with(
+              an_instance_of(Concurrent::ThreadPoolExecutor), any_args
+            ).and_call_original.twice
+
+            instance.resolve_sideloads(results)
+          end
+
+          context "with nested sideloads greater than Graphiti.config.concurrency_max_threads" do
+            let(:params) { {include: {positions: {department: {}}}} }
+            let(:position_resource) do
+              Class.new(PORO::PositionResource) do
+                self.default_page_size = 1
+              end.new
+            end
+            let(:department_resource) do
+              Class.new(PORO::DepartmentResource) do
+                self.default_page_size = 1
+              end.new
+            end
+            let(:department_sideload) { double("department", shared_remote?: false, name: :department) }
+            let(:position_results) { double("positions").as_null_object }
+
+            before do
+              allow(position_resource).to receive(:resolve) { position_results }
+              allow(position_resource.class).to receive(:sideload).with(:department) { department_sideload }
+              allow(department_resource).to receive(:resolve) { double("department").as_null_object }
+              allow(department_resource.class).to receive(:sideload).with(:positions) { department_positions_sideload }
+
+              # make resolve just load the sideloads
+              allow(sideload).to receive(:future_resolve) do |_results, q, _parent_resource|
+                described_class.new(double.as_null_object, position_resource, q).future_resolve
+              end
+
+              allow(department_sideload).to receive(:future_resolve) do |_results, q, _parent_resource|
+                described_class.new(double.as_null_object, department_resource, q).future_resolve
+              end
+            end
+
+            it "does not deadlock" do
+              expect { instance.resolve_sideloads(results) }.not_to raise_error
+            end
+
+            it "flattens the nested sideload promises" do
+              expect(instance.resolve_sideloads(results)).to contain_exactly(position_results)
+            end
+          end
+
+          context "parent thread locals" do
             it "are accessible to the sideloading thread from the threadpool" do
-              # Start the thread pool first
-              #
-              # Fiber storage is inherited from the parent thread so we
-              # need to start the thread pool first so the thread does
-              # not inherit the Fiber[:foo] from the main thread.
-              allow(sideload).to receive(:future_resolve) { Concurrent::Promises.fulfilled_future({}) }
-              instance.resolve_sideloads(results)
-
-              Fiber[:foo] = "bar"
+              Thread.current[:foo] = "bar"
 
               allow(sideload).to receive(:future_resolve) do
-                expect(Fiber[:foo]).to eq("bar")
+                expect(Thread.current[:foo]).to eq("bar")
                 Concurrent::Promises.fulfilled_future({})
               end
               instance.resolve_sideloads(results)
 
-              expect(Fiber[:foo]).to eq("bar")
+              expect(Thread.current[:foo]).to eq("bar")
             ensure
-              Fiber[:foo] = nil
+              Thread.current[:foo] = nil
+            end
+          end
+
+          if Fiber.respond_to?(:[])
+            context "parent fiber locals" do
+              it "are accessible to the sideloading thread from the threadpool" do
+                # Start the thread pool first
+                #
+                # Fiber storage is inherited from the parent thread so we
+                # need to start the thread pool first so the thread does
+                # not inherit the Fiber[:foo] from the main thread.
+                allow(sideload).to receive(:future_resolve) { Concurrent::Promises.fulfilled_future({}) }
+                instance.resolve_sideloads(results)
+
+                Fiber[:foo] = "bar"
+
+                allow(sideload).to receive(:future_resolve) do
+                  expect(Fiber[:foo]).to eq("bar")
+                  Concurrent::Promises.fulfilled_future({})
+                end
+                instance.resolve_sideloads(results)
+
+                expect(Fiber[:foo]).to eq("bar")
+              ensure
+                Fiber[:foo] = nil
+              end
+            end
+          end
+
+          context "when the first sideload errors" do
+            before do
+              allow(sideload).to receive(:future_resolve) do
+                Concurrent::Promises.future { raise "danger will robinson!" }
+              end
+            end
+
+            it "raises the error" do
+              expect { instance.resolve_sideloads(results) }.to raise_error("danger will robinson!")
+            end
+          end
+
+          context "when another sideload errors" do
+            let(:sideload_2) { double("visas", shared_remote?: false, name: :visas) }
+            let(:params) { {include: {positions: {}, visas: {}}} }
+
+            before do
+              allow(resource.class).to receive(:sideload).with(:visas) { sideload_2 }
+              allow(sideload).to receive(:future_resolve) { Concurrent::Promises.future {} }
+              allow(sideload_2).to receive(:future_resolve) { Concurrent::Promises.future { raise "sideload_2" } }
+            end
+
+            it "raises the error" do
+              expect { instance.resolve_sideloads(results) }.to raise_error("sideload_2")
+            end
+          end
+
+          context "when multiple sideloads error" do
+            let(:sideload_2) { double("visas", shared_remote?: false, name: :visas) }
+            let(:params) { {include: {positions: {}, visas: {}}} }
+
+            before do
+              allow(resource.class).to receive(:sideload).with(:visas) { sideload_2 }
+              allow(sideload).to receive(:future_resolve) { Concurrent::Promises.future { raise "sideload" } }
+              allow(sideload_2).to receive(:future_resolve) { Concurrent::Promises.future { raise "sideload_2" } }
+            end
+
+            it "raises the first error" do
+              expect { instance.resolve_sideloads(results) }.to raise_error("sideload")
             end
           end
         end
 
-        describe "solo sideloading" do
-          it "loads on the same thread" do
+        context "with a singular sideload" do
+          let(:params) { {include: {positions: {}}} }
+
+          it "loads synchronously on the same thread" do
             resolve_thread = nil
 
             allow(sideload).to receive(:future_resolve) do
@@ -340,48 +404,6 @@ RSpec.describe Graphiti::Scope do
         it "does not resolve the sideload" do
           expect(sideload).to_not receive(:resolve)
           instance.resolve_sideloads(results)
-        end
-      end
-
-      context "when the first sideload errors" do
-        before do
-          allow(sideload).to receive(:future_resolve) do
-            Concurrent::Promises.future { raise "danger will robinson!" }
-          end
-        end
-
-        it "raises the error" do
-          expect { instance.resolve_sideloads(results) }.to raise_error("danger will robinson!")
-        end
-      end
-
-      context "when another sideload errors" do
-        let(:sideload_2) { double("visas", shared_remote?: false, name: :visas) }
-        let(:params) { {include: {positions: {}, visas: {}}} }
-
-        before do
-          allow(resource.class).to receive(:sideload).with(:visas) { sideload_2 }
-          allow(sideload).to receive(:future_resolve) { Concurrent::Promises.future {} }
-          allow(sideload_2).to receive(:future_resolve) { Concurrent::Promises.future { raise "sideload_2" } }
-        end
-
-        it "raises the error" do
-          expect { instance.resolve_sideloads(results) }.to raise_error("sideload_2")
-        end
-      end
-
-      context "when multiple sideloads error" do
-        let(:sideload_2) { double("visas", shared_remote?: false, name: :visas) }
-        let(:params) { {include: {positions: {}, visas: {}}} }
-
-        before do
-          allow(resource.class).to receive(:sideload).with(:visas) { sideload_2 }
-          allow(sideload).to receive(:future_resolve) { Concurrent::Promises.future { raise "sideload" } }
-          allow(sideload_2).to receive(:future_resolve) { Concurrent::Promises.future { raise "sideload_2" } }
-        end
-
-        it "raises the first error" do
-          expect { instance.resolve_sideloads(results) }.to raise_error("sideload")
         end
       end
     end
