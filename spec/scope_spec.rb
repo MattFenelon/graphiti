@@ -220,6 +220,10 @@ RSpec.describe Graphiti::Scope do
           end
 
           context "with nested sideloads greater than Graphiti.config.concurrency_max_threads" do
+            # TODO: Need to figure out a way to activate asynchronous
+            # loading for the nested sideloads by having multiple
+            # sideloads at each level. A blocker is that Positions
+            # doesn't have enough sideloads.
             let(:params) { {include: {positions: {department: {}}, visas: {}}} }
             let(:position_resource) do
               Class.new(PORO::PositionResource) do
